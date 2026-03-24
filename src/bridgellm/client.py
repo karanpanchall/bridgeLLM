@@ -183,7 +183,7 @@ class BridgeLLM:
         messages: list[dict],
         model: Optional[str] = None,
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> LLMResponse:
@@ -216,7 +216,7 @@ class BridgeLLM:
         messages: list[dict],
         model: Optional[str] = None,
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> AsyncIterator[StreamChunk]:

@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_UNIFYLLM_VERSION = "0.1.1"
+_UNIFYLLM_VERSION = "0.2.0"
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,6 @@ from typing import AsyncIterator, Optional
 
 from openai import AsyncOpenAI
 
-from .._model_caps import sanitize_params
 from ..errors import ProviderError
 from ..models import (
     AudioData,
@@ -46,7 +45,7 @@ class OpenAICompatAdapter(LLMAdapter):
         model: str,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> LLMResponse:
@@ -54,7 +53,7 @@ class OpenAICompatAdapter(LLMAdapter):
             raise ProviderError(self._provider, "messages list cannot be empty")
 
         kwargs = _build_request(model, messages, tools, temperature, max_tokens, config)
-        kwargs = sanitize_params(model, kwargs)
+
         try:
             response = await self._client.chat.completions.create(**kwargs)
         except asyncio.CancelledError:
@@ -85,7 +84,7 @@ class OpenAICompatAdapter(LLMAdapter):
         model: str,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> AsyncIterator[StreamChunk]:
@@ -93,7 +92,7 @@ class OpenAICompatAdapter(LLMAdapter):
             raise ProviderError(self._provider, "messages list cannot be empty")
 
         kwargs = _build_request(model, messages, tools, temperature, max_tokens, config)
-        kwargs = sanitize_params(model, kwargs)
+
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
 
@@ -224,10 +223,12 @@ class OpenAICompatAdapter(LLMAdapter):
 
 def _build_request(
     model: str, messages: list[dict], tools: Optional[list[dict]],
-    temperature: float, max_tokens: Optional[int], config: Optional[RequestConfig],
+    temperature: Optional[float], max_tokens: Optional[int], config: Optional[RequestConfig],
 ) -> dict:
     """Assemble kwargs for the OpenAI SDK call, applying all RequestConfig params."""
-    kwargs: dict = {"model": model, "messages": messages, "temperature": temperature}
+    kwargs: dict = {"model": model, "messages": messages}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = (config.tool_choice if config and config.tool_choice else "auto")

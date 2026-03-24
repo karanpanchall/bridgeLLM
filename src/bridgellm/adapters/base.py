@@ -28,7 +28,7 @@ class LLMAdapter(ABC):
         model: str,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> LLMResponse:
@@ -40,7 +40,7 @@ class LLMAdapter(ABC):
         model: str,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> AsyncIterator[StreamChunk]:

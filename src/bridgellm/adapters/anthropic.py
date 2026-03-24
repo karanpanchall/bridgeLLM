@@ -44,7 +44,7 @@ class AnthropicAdapter(LLMAdapter):
         model: str,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> LLMResponse:
@@ -79,7 +79,7 @@ class AnthropicAdapter(LLMAdapter):
         model: str,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> AsyncIterator[StreamChunk]:
@@ -190,7 +190,7 @@ def _prepare_messages(messages: list[dict]) -> tuple[str, list[dict]]:
 
 def _build_request(
     model: str, messages: list[dict], system: str,
-    tools: Optional[list[dict]], temperature: float,
+    tools: Optional[list[dict]], temperature: Optional[float],
     max_tokens: Optional[int], config: Optional[RequestConfig],
 ) -> dict:
     """Assemble kwargs for the Anthropic SDK, translating from OpenAI conventions."""
@@ -201,7 +201,7 @@ def _build_request(
     }
 
     has_thinking = config and config.reasoning and config.reasoning.get("budget_tokens")
-    if not has_thinking:
+    if not has_thinking and temperature is not None:
         kwargs["temperature"] = temperature
 
     if system:

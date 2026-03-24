@@ -120,7 +120,7 @@ class AgentLoop:
         self,
         messages: list[dict],
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> AsyncIterator[AgentEvent]:
         """Execute the agent loop, yielding events.
