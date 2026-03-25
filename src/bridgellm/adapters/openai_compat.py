@@ -60,7 +60,17 @@ class OpenAICompatAdapter(LLMAdapter):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            raise ProviderError(self._provider, str(exc)) from exc
+            # Auto-recover from unsupported params (e.g., temperature on reasoning models)
+            stripped = _strip_rejected_param(kwargs, str(exc))
+            if stripped is not None:
+                try:
+                    response = await self._client.chat.completions.create(**stripped)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as retry_exc:
+                    raise ProviderError(self._provider, str(retry_exc)) from retry_exc
+            else:
+                raise ProviderError(self._provider, str(exc)) from exc
 
         if not response.choices:
             raise ProviderError(self._provider, "API returned empty choices list")
@@ -102,7 +112,16 @@ class OpenAICompatAdapter(LLMAdapter):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            raise ProviderError(self._provider, str(exc)) from exc
+            stripped = _strip_rejected_param(kwargs, str(exc))
+            if stripped is not None:
+                try:
+                    response = await self._client.chat.completions.create(**stripped)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as retry_exc:
+                    raise ProviderError(self._provider, str(retry_exc)) from retry_exc
+            else:
+                raise ProviderError(self._provider, str(exc)) from exc
 
         tool_accumulator: dict[int, dict] = {}
         total_input = total_output = 0
@@ -217,6 +236,34 @@ class OpenAICompatAdapter(LLMAdapter):
             raise ProviderError(self._provider, str(exc)) from exc
         finally:
             audio_file.close()
+
+
+# -- unsupported param auto-recovery --
+
+
+import re
+
+_UNSUPPORTED_PARAM_PATTERN = re.compile(
+    r"Unsupported (?:parameter|value): '(\w+)'", re.IGNORECASE
+)
+
+
+def _strip_rejected_param(kwargs: dict, error_message: str) -> Optional[dict]:
+    """Parse an API error for unsupported param name, strip it, return new kwargs.
+
+    Returns None if the error is not a param rejection (should not retry).
+    Only retries once — the caller must not loop.
+    """
+    match = _UNSUPPORTED_PARAM_PATTERN.search(error_message)
+    if not match:
+        return None
+    param_name = match.group(1)
+    if param_name not in kwargs:
+        return None
+    stripped = dict(kwargs)
+    del stripped[param_name]
+    logger.info("Auto-stripped unsupported param '%s' from request, retrying", param_name)
+    return stripped
 
 
 # -- request building --
