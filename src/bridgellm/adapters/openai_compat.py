@@ -125,6 +125,7 @@ class OpenAICompatAdapter(LLMAdapter):
 
         tool_accumulator: dict[int, dict] = {}
         total_input = total_output = 0
+        cache_read = cache_creation = 0
 
         try:
             async for chunk in response:
@@ -132,6 +133,8 @@ class OpenAICompatAdapter(LLMAdapter):
                 if chunk_usage:
                     total_input = getattr(chunk_usage, "prompt_tokens", 0) or total_input
                     total_output = getattr(chunk_usage, "completion_tokens", 0) or total_output
+                    cache_read = _extract_cache_tokens(chunk_usage, "read") or cache_read
+                    cache_creation = _extract_cache_tokens(chunk_usage, "creation") or cache_creation
 
                 choice = chunk.choices[0] if chunk.choices else None
                 if choice is None:
@@ -153,7 +156,12 @@ class OpenAICompatAdapter(LLMAdapter):
                 )
 
             if total_input or total_output:
-                yield StreamChunk(input_tokens=total_input, output_tokens=total_output)
+                yield StreamChunk(
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    cache_read_tokens=cache_read,
+                    cache_creation_tokens=cache_creation,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -381,6 +389,8 @@ def _extract_cache_tokens(usage, cache_type: str) -> int:
         return 0
     if cache_type == "read":
         return getattr(details, "cached_tokens", 0) or 0
+    if cache_type == "creation":
+        return getattr(details, "cache_creation_input_tokens", 0) or 0
     return 0
 
 
