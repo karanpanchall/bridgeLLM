@@ -30,7 +30,8 @@ from .base import LLMAdapter
 
 logger = logging.getLogger(__name__)
 
-_EMBEDDING_BATCH_SIZE = 100
+_EMBEDDING_BATCH_SIZE = 500
+_EMBEDDING_MAX_CONCURRENCY = 5
 
 
 class OpenAICompatAdapter(LLMAdapter):
@@ -171,26 +172,49 @@ class OpenAICompatAdapter(LLMAdapter):
         if not texts:
             raise ProviderError(self._provider, "texts list cannot be empty")
 
+        # Split into batches
+        batches: list[list[str]] = []
+        for batch_start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
+            batches.append(texts[batch_start : batch_start + _EMBEDDING_BATCH_SIZE])
+
+        # Single batch — skip semaphore overhead
+        if len(batches) == 1:
+            return await self._embed_single_batch(model, batches[0], dimensions)
+
+        # Multiple batches — run concurrently with bounded concurrency
+        sem = asyncio.Semaphore(_EMBEDDING_MAX_CONCURRENCY)
+
+        async def _guarded(batch: list[str]) -> EmbeddingResponse:
+            async with sem:
+                return await self._embed_single_batch(model, batch, dimensions)
+
+        results = await asyncio.gather(*[_guarded(b) for b in batches])
+
         all_vectors: list[list[float]] = []
         total_tokens = 0
-
-        for batch_start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
-            batch = texts[batch_start : batch_start + _EMBEDDING_BATCH_SIZE]
-            kwargs: dict = {"model": model, "input": batch}
-            if dimensions:
-                kwargs["dimensions"] = dimensions
-            try:
-                response = await self._client.embeddings.create(**kwargs)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                raise ProviderError(self._provider, str(exc)) from exc
-
-            all_vectors.extend(item.embedding for item in response.data)
-            resp_usage = getattr(response, "usage", None)
-            total_tokens += getattr(resp_usage, "prompt_tokens", 0) if resp_usage else 0
+        for r in results:
+            all_vectors.extend(r.vectors)
+            total_tokens += r.input_tokens
 
         return EmbeddingResponse(vectors=all_vectors, model=model, input_tokens=total_tokens)
+
+    async def _embed_single_batch(
+        self, model: str, batch: list[str], dimensions: Optional[int] = None
+    ) -> EmbeddingResponse:
+        kwargs: dict = {"model": model, "input": batch}
+        if dimensions:
+            kwargs["dimensions"] = dimensions
+        try:
+            response = await self._client.embeddings.create(**kwargs)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise ProviderError(self._provider, str(exc)) from exc
+
+        vectors = [item.embedding for item in response.data]
+        resp_usage = getattr(response, "usage", None)
+        tokens = getattr(resp_usage, "prompt_tokens", 0) if resp_usage else 0
+        return EmbeddingResponse(vectors=vectors, model=model, input_tokens=tokens)
 
     async def list_models(self) -> list[ModelInfo]:
         try:
