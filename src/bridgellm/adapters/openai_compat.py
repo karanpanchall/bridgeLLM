@@ -344,6 +344,10 @@ def _build_request(
         kwargs["modalities"] = config.modalities
     if config.audio:
         kwargs["audio"] = {"voice": config.audio.voice, "format": config.audio.format}
+    # OpenAI explicit cache routing — pins identical-prefix requests to the
+    # same cache shard so ``cached_tokens`` hit rate stays high under concurrency.
+    if getattr(config, "prompt_cache_key", None):
+        kwargs["prompt_cache_key"] = config.prompt_cache_key
     if config.extra:
         kwargs.update(config.extra)
     return kwargs

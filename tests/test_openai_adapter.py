@@ -553,6 +553,37 @@ class TestRequestConfigForwarding:
         assert kwargs["parallel_tool_calls"] is False
 
     @pytest.mark.asyncio
+    async def test_prompt_cache_key_forwarded(self):
+        """When set, ``prompt_cache_key`` is sent as a top-level OpenAI param
+        so identical-prefix requests pin to the same cache shard."""
+        from bridgellm.adapters.openai_compat import _build_request
+        from bridgellm.models import RequestConfig
+
+        config = RequestConfig(prompt_cache_key="myapp:soul:v42")
+        kwargs = _build_request("gpt-4o", [], None, 0.7, 100, config)
+        assert kwargs["prompt_cache_key"] == "myapp:soul:v42"
+
+    @pytest.mark.asyncio
+    async def test_prompt_cache_key_omitted_when_none(self):
+        """Default ``None`` means no key sent — backwards compatible."""
+        from bridgellm.adapters.openai_compat import _build_request
+        from bridgellm.models import RequestConfig
+
+        config = RequestConfig()
+        kwargs = _build_request("gpt-4o", [], None, 0.7, 100, config)
+        assert "prompt_cache_key" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_prompt_cache_key_omitted_when_empty(self):
+        """Empty string is treated as unset (truthiness check)."""
+        from bridgellm.adapters.openai_compat import _build_request
+        from bridgellm.models import RequestConfig
+
+        config = RequestConfig(prompt_cache_key="")
+        kwargs = _build_request("gpt-4o", [], None, 0.7, 100, config)
+        assert "prompt_cache_key" not in kwargs
+
+    @pytest.mark.asyncio
     async def test_extra_passthrough(self):
         from bridgellm.adapters.openai_compat import _build_request
         from bridgellm.models import RequestConfig

@@ -47,6 +47,12 @@ class RequestConfig:
     # definition gets a breakpoint, so tools+system stay cached together.
     cache_system: bool = True
     cache_tools: bool = True
+    # OpenAI prompt-cache routing key (no-op for non-OpenAI providers).
+    # OpenAI shards requests across cache instances at high concurrency; a
+    # stable key pins identical-prefix requests to the same shard so the
+    # ``cached_tokens`` hit rate stays high. Strongly recommended in
+    # high-traffic apps with shared system prompts. Up to 64 chars.
+    prompt_cache_key: Optional[str] = None
 
 
 @dataclass(frozen=True)
