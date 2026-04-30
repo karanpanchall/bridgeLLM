@@ -41,6 +41,12 @@ class RequestConfig:
     modalities: Optional[list[str]] = None  # ["text"], ["text", "audio"]
     audio: Optional[AudioConfig] = None
     extra: Optional[dict] = None  # provider-specific pass-through
+    # Anthropic prompt-cache controls (no-op for non-Anthropic providers).
+    # When ``cache_system`` is True, the system prompt is sent as a single
+    # ephemeral cache breakpoint. When ``cache_tools`` is True, the LAST tool
+    # definition gets a breakpoint, so tools+system stay cached together.
+    cache_system: bool = True
+    cache_tools: bool = True
 
 
 @dataclass(frozen=True)

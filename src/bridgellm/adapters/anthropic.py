@@ -185,6 +185,19 @@ def _prepare_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     return system, converted
 
 
+def _system_blocks(system: str, cache: bool) -> list[dict]:
+    """Wrap the system prompt in Anthropic's content-block format.
+
+    When ``cache=True`` we attach an ``ephemeral`` cache_control marker so the
+    KV projection of the system prefix is reused on subsequent requests
+    (free reads after the first call within the cache TTL).
+    """
+    block: dict = {"type": "text", "text": system}
+    if cache:
+        block["cache_control"] = {"type": "ephemeral"}
+    return [block]
+
+
 # -- request building --
 
 
@@ -204,10 +217,13 @@ def _build_request(
     if not has_thinking and temperature is not None:
         kwargs["temperature"] = temperature
 
+    cache_system = getattr(config, "cache_system", True) if config else True
+    cache_tools = getattr(config, "cache_tools", True) if config else True
+
     if system:
-        kwargs["system"] = system
+        kwargs["system"] = _system_blocks(system, cache_system)
     if tools:
-        kwargs["tools"] = _convert_tools(tools)
+        kwargs["tools"] = _convert_tools(tools, cache_last=cache_tools)
         tool_choice = (config.tool_choice if config and config.tool_choice else "auto")
         kwargs["tool_choice"] = _translate_tool_choice(tool_choice)
 
@@ -237,15 +253,25 @@ def _build_request(
     return kwargs
 
 
-def _convert_tools(openai_tools: list[dict]) -> list[dict]:
-    return [
-        {
-            "name": (func := tool.get("function", tool)).get("name", ""),
+def _convert_tools(openai_tools: list[dict], cache_last: bool = False) -> list[dict]:
+    """Translate OpenAI-shaped tool defs to Anthropic shape.
+
+    When ``cache_last=True`` an ephemeral cache_control breakpoint is placed
+    on the LAST tool. Anthropic caches everything BEFORE the breakpoint, so
+    a single marker on the last tool causes the entire tools array (plus the
+    cached system prompt) to be reused across requests.
+    """
+    converted: list[dict] = []
+    for tool in openai_tools:
+        func = tool.get("function", tool)
+        converted.append({
+            "name": func.get("name", ""),
             "description": func.get("description", ""),
             "input_schema": func.get("parameters", {}),
-        }
-        for tool in openai_tools
-    ]
+        })
+    if cache_last and converted:
+        converted[-1]["cache_control"] = {"type": "ephemeral"}
+    return converted
 
 
 def _translate_tool_choice(choice) -> dict:

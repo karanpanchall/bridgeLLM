@@ -178,6 +178,35 @@ class BridgeLLM:
 
     # -- Chat completions --
 
+    # ── Transient-error retry (independent of fallback chain) ──
+    _RETRY_ATTEMPTS = 3
+    _RETRY_BASE_DELAY = 1.5  # seconds; exponential backoff
+
+    @staticmethod
+    def _is_transient(exc: Exception) -> bool:
+        """Return True for errors worth retrying on the SAME model.
+
+        Covers rate-limits, timeouts, transient connection / 5xx errors.
+        Permanent failures (auth, validation, context overflow) fall through
+        immediately so we don't waste retries on a request that will never
+        succeed.
+        """
+        type_name = type(exc).__name__
+        if type_name in {
+            "RateLimitError", "Timeout", "TimeoutError", "APITimeoutError",
+            "APIConnectionError", "ServiceUnavailableError", "InternalServerError",
+            "OverloadedError",
+        }:
+            return True
+        text = str(exc).lower()
+        for kw in (
+            "rate_limit", "ratelimit", "429", "timeout", "timed out",
+            "connection", "server_error", "500 ", "502", "503", "overloaded",
+        ):
+            if kw in text:
+                return True
+        return False
+
     async def complete(
         self,
         messages: list[dict],
@@ -189,7 +218,9 @@ class BridgeLLM:
     ) -> LLMResponse:
         """Send messages and return a complete response.
 
-        Tries the specified/primary model first, then each fallback.
+        Tries the specified/primary model first, then each fallback. Within
+        each model, transient errors are retried up to ``_RETRY_ATTEMPTS``
+        with exponential backoff before falling through to the next model.
         """
         prepared = self._prepare_messages(messages)
         primary = model or self._model_string
@@ -198,16 +229,26 @@ class BridgeLLM:
 
         for model_string in models_to_try:
             adapter, model_name = self._resolve_adapter(model_string)
-            try:
-                return await adapter.complete(
-                    model=model_name, messages=prepared, tools=tools,
-                    temperature=temperature, max_tokens=max_tokens, config=config,
-                )
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                raise
-            except Exception as exc:
-                logger.warning("Completion failed for '%s': %s", model_string, exc)
-                errors.append(exc)
+            for attempt in range(self._RETRY_ATTEMPTS):
+                try:
+                    return await adapter.complete(
+                        model=model_name, messages=prepared, tools=tools,
+                        temperature=temperature, max_tokens=max_tokens, config=config,
+                    )
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    raise
+                except Exception as exc:
+                    if self._is_transient(exc) and attempt + 1 < self._RETRY_ATTEMPTS:
+                        delay = self._RETRY_BASE_DELAY * (2 ** attempt)
+                        logger.warning(
+                            "Transient error from '%s' (attempt %d/%d): %s — retrying in %.1fs",
+                            model_string, attempt + 1, self._RETRY_ATTEMPTS, exc, delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.warning("Completion failed for '%s': %s", model_string, exc)
+                    errors.append(exc)
+                    break
 
         raise AllProvidersFailedError(errors)
 
@@ -220,7 +261,13 @@ class BridgeLLM:
         max_tokens: Optional[int] = None,
         config: Optional[RequestConfig] = None,
     ) -> AsyncIterator[StreamChunk]:
-        """Stream a response, trying fallbacks on failure."""
+        """Stream a response, trying fallbacks on failure.
+
+        Retries transient errors that occur BEFORE the first chunk yields.
+        Once the stream begins emitting chunks, errors propagate immediately
+        — partial responses must not be silently retried (the caller may
+        have already streamed text to the user).
+        """
         prepared = self._prepare_messages(messages)
         primary = model or self._model_string
         models_to_try = [primary] + self._fallback_models
@@ -228,18 +275,34 @@ class BridgeLLM:
 
         for model_string in models_to_try:
             adapter, model_name = self._resolve_adapter(model_string)
-            try:
-                async for chunk in adapter.stream(
-                    model=model_name, messages=prepared, tools=tools,
-                    temperature=temperature, max_tokens=max_tokens, config=config,
-                ):
-                    yield chunk
-                return
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                raise
-            except Exception as exc:
-                logger.warning("Stream failed for '%s': %s", model_string, exc)
-                errors.append(exc)
+            for attempt in range(self._RETRY_ATTEMPTS):
+                started = False
+                try:
+                    async for chunk in adapter.stream(
+                        model=model_name, messages=prepared, tools=tools,
+                        temperature=temperature, max_tokens=max_tokens, config=config,
+                    ):
+                        started = True
+                        yield chunk
+                    return
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    raise
+                except Exception as exc:
+                    if (
+                        not started
+                        and self._is_transient(exc)
+                        and attempt + 1 < self._RETRY_ATTEMPTS
+                    ):
+                        delay = self._RETRY_BASE_DELAY * (2 ** attempt)
+                        logger.warning(
+                            "Transient stream error from '%s' (attempt %d/%d): %s — retrying in %.1fs",
+                            model_string, attempt + 1, self._RETRY_ATTEMPTS, exc, delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.warning("Stream failed for '%s': %s", model_string, exc)
+                    errors.append(exc)
+                    break
 
         raise AllProvidersFailedError(errors)
 
