@@ -217,11 +217,14 @@ def _build_request(
     if not has_thinking and temperature is not None:
         kwargs["temperature"] = temperature
 
-    cache_system = getattr(config, "cache_system", True) if config else True
-    cache_tools = getattr(config, "cache_tools", True) if config else True
+    cache_system = getattr(config, "cache_system", False) if config else False
+    cache_tools = getattr(config, "cache_tools", False) if config else False
 
     if system:
-        kwargs["system"] = _system_blocks(system, cache_system)
+        # When caching is opt-out (default), preserve the plain-string shape
+        # callers got prior to v0.4.0 — list-of-blocks is BC-breaking for
+        # downstream consumers that asserted on the system param shape.
+        kwargs["system"] = _system_blocks(system, cache_system) if cache_system else system
     if tools:
         kwargs["tools"] = _convert_tools(tools, cache_last=cache_tools)
         tool_choice = (config.tool_choice if config and config.tool_choice else "auto")

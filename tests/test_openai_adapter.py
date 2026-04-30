@@ -628,3 +628,52 @@ class TestRequestConfigForwarding:
         call_kwargs = adapter._client.chat.completions.create.call_args[1]
         assert call_kwargs["response_format"] == {"type": "json_object"}
         assert call_kwargs["top_p"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_complete_forwards_prompt_cache_key_to_sdk(self):
+        """``prompt_cache_key`` on RequestConfig must reach the AsyncOpenAI SDK call."""
+        from bridgellm.models import RequestConfig
+
+        adapter = _create_adapter()
+        mock_response = MockCompletion(
+            choices=[MockChoice(message=MockMessage(content="ok", tool_calls=None), finish_reason="stop")],
+            usage=MockUsage(prompt_tokens=5, completion_tokens=2),
+            model="gpt-4o",
+        )
+        adapter._client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        config = RequestConfig(prompt_cache_key="test-key-123")
+        await adapter.complete(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "hi"}],
+            config=config,
+        )
+
+        call_kwargs = adapter._client.chat.completions.create.call_args[1]
+        assert call_kwargs["prompt_cache_key"] == "test-key-123"
+
+    @pytest.mark.asyncio
+    async def test_stream_forwards_prompt_cache_key_to_sdk(self):
+        """``prompt_cache_key`` must also reach the SDK on streaming calls."""
+        from bridgellm.models import RequestConfig
+
+        adapter = _create_adapter()
+
+        async def mock_stream():
+            yield MockStreamChunk(choices=[MockStreamChoice(delta=MockDelta(content="ok"))])
+            yield MockStreamChunk(
+                choices=[MockStreamChoice(delta=MockDelta(), finish_reason="stop")]
+            )
+
+        adapter._client.chat.completions.create = AsyncMock(return_value=mock_stream())
+
+        config = RequestConfig(prompt_cache_key="stream-key-456")
+        async for _ in adapter.stream(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "hi"}],
+            config=config,
+        ):
+            pass
+
+        call_kwargs = adapter._client.chat.completions.create.call_args[1]
+        assert call_kwargs["prompt_cache_key"] == "stream-key-456"

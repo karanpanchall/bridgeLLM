@@ -351,14 +351,39 @@ class TestAnthropicAdapterComplete:
         assert result.finish_reason == "stop"
 
         # Verify system was extracted to top-level param.
-        # As of v0.4.0 the system is sent as a content-block list with an
-        # ephemeral cache_control marker so Anthropic reuses the KV cache
-        # across requests. The test pins both the text and the cache flag.
+        # As of v0.4.2 the cache_system default is False (opt-in) so the
+        # system param is sent as a plain string for backwards compatibility.
+        call_kwargs = adapter._client.messages.create.call_args[1]
+        assert call_kwargs["system"] == "Be helpful."
+        assert all(msg["role"] != "system" for msg in call_kwargs["messages"])
+
+    @pytest.mark.asyncio
+    async def test_returns_llm_response_with_cache_system_enabled(self):
+        """When cache_system=True, system goes as a content-block list with cache_control."""
+        from bridgellm.models import RequestConfig
+
+        adapter = _make_adapter()
+        mock_msg = MockMessage(
+            content=[MockTextBlock(text="Hello from Claude")],
+            usage=MockUsage(input_tokens=15, output_tokens=8),
+            model="claude-sonnet",
+            stop_reason="end_turn",
+        )
+        adapter._client.messages.create = AsyncMock(return_value=mock_msg)
+
+        await adapter.complete(
+            model="claude-sonnet",
+            messages=[
+                {"role": "system", "content": "Be helpful."},
+                {"role": "user", "content": "Hi"},
+            ],
+            config=RequestConfig(cache_system=True),
+        )
+
         call_kwargs = adapter._client.messages.create.call_args[1]
         assert call_kwargs["system"] == [
             {"type": "text", "text": "Be helpful.", "cache_control": {"type": "ephemeral"}}
         ]
-        assert all(msg["role"] != "system" for msg in call_kwargs["messages"])
 
     @pytest.mark.asyncio
     async def test_with_tool_use_response(self):

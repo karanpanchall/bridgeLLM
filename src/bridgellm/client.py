@@ -190,21 +190,33 @@ class BridgeLLM:
         Permanent failures (auth, validation, context overflow) fall through
         immediately so we don't waste retries on a request that will never
         succeed.
+
+        Adapters wrap upstream SDK errors in ``ProviderError`` (e.g. the
+        OpenAI-compat adapter), so ``type(exc).__name__`` against the wrapper
+        is useless. Walk the ``__cause__`` chain first so the original SDK
+        exception type (``RateLimitError`` etc.) drives the decision.
         """
-        type_name = type(exc).__name__
-        if type_name in {
+        transient_type_names = {
             "RateLimitError", "Timeout", "TimeoutError", "APITimeoutError",
             "APIConnectionError", "ServiceUnavailableError", "InternalServerError",
             "OverloadedError",
-        }:
-            return True
-        text = str(exc).lower()
-        for kw in (
+        }
+        transient_keywords = (
             "rate_limit", "ratelimit", "429", "timeout", "timed out",
             "connection", "server_error", "500 ", "502", "503", "overloaded",
-        ):
-            if kw in text:
+        )
+
+        seen: set[int] = set()
+        current: Optional[BaseException] = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if type(current).__name__ in transient_type_names:
                 return True
+            text = str(current).lower()
+            for kw in transient_keywords:
+                if kw in text:
+                    return True
+            current = getattr(current, "__cause__", None)
         return False
 
     async def complete(

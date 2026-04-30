@@ -437,3 +437,47 @@ class TestListModelsProvider:
 
         models = await llm.list_models(provider="groq")
         assert models[0].provider == "groq"
+
+
+class TestIsTransient:
+    """Verify ``_is_transient`` correctly identifies retryable errors,
+    including SDK errors that adapters wrap in ``ProviderError``.
+    """
+
+    def test_direct_rate_limit_error_is_transient(self):
+        class RateLimitError(Exception):
+            pass
+
+        assert BridgeLLM._is_transient(RateLimitError("hit limit")) is True
+
+    def test_provider_error_wrapping_rate_limit_is_transient(self):
+        """OpenAI adapter wraps every SDK error in ProviderError. The wrapper
+        type name (``ProviderError``) is not in the transient set, so we must
+        walk ``__cause__`` to find the original error type."""
+        class RateLimitError(Exception):
+            pass
+
+        original = RateLimitError("429 too many requests")
+        try:
+            raise ProviderError("openai", "wrapped") from original
+        except ProviderError as wrapped:
+            assert BridgeLLM._is_transient(wrapped) is True
+
+    def test_provider_error_wrapping_permanent_error_is_not_transient(self):
+        class AuthenticationError(Exception):
+            pass
+
+        original = AuthenticationError("invalid api key")
+        try:
+            raise ProviderError("openai", "wrapped") from original
+        except ProviderError as wrapped:
+            assert BridgeLLM._is_transient(wrapped) is False
+
+    def test_string_match_still_works(self):
+        assert BridgeLLM._is_transient(Exception("upstream 503 service unavailable")) is True
+
+    def test_self_referential_cause_does_not_recurse_forever(self):
+        """Guard the ``__cause__`` walk against pathological cycles."""
+        exc = Exception("nothing transient here")
+        exc.__cause__ = exc
+        assert BridgeLLM._is_transient(exc) is False

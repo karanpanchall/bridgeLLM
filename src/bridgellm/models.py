@@ -45,8 +45,8 @@ class RequestConfig:
     # When ``cache_system`` is True, the system prompt is sent as a single
     # ephemeral cache breakpoint. When ``cache_tools`` is True, the LAST tool
     # definition gets a breakpoint, so tools+system stay cached together.
-    cache_system: bool = True
-    cache_tools: bool = True
+    cache_system: bool = False
+    cache_tools: bool = False
     # OpenAI prompt-cache routing key (no-op for non-OpenAI providers).
     # OpenAI shards requests across cache instances at high concurrency; a
     # stable key pins identical-prefix requests to the same shard so the
