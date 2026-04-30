@@ -350,9 +350,14 @@ class TestAnthropicAdapterComplete:
         assert result.output_tokens == 8
         assert result.finish_reason == "stop"
 
-        # Verify system was extracted to top-level param
+        # Verify system was extracted to top-level param.
+        # As of v0.4.0 the system is sent as a content-block list with an
+        # ephemeral cache_control marker so Anthropic reuses the KV cache
+        # across requests. The test pins both the text and the cache flag.
         call_kwargs = adapter._client.messages.create.call_args[1]
-        assert call_kwargs["system"] == "Be helpful."
+        assert call_kwargs["system"] == [
+            {"type": "text", "text": "Be helpful.", "cache_control": {"type": "ephemeral"}}
+        ]
         assert all(msg["role"] != "system" for msg in call_kwargs["messages"])
 
     @pytest.mark.asyncio
